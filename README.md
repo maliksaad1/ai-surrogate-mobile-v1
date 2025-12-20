@@ -23,7 +23,7 @@ The app routes your requests to specialized agents:
 - **Icons**: Lucide React Native
 
 ## 📱 Screenshots
-*(Add screenshots here)*
+*will be updated soon*
 
 ## 🛠 Installation & Setup
 
