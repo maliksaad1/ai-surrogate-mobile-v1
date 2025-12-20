@@ -1,0 +1,14 @@
+app/(tabs)/_layout.tsx(1,22): error TS2307: Cannot find module 'expo-router' or its corresponding type declarations.
+app/(tabs)/_layout.tsx(35,36): error TS7031: Binding element 'color' implicitly has an 'any' type.
+app/(tabs)/_layout.tsx(35,43): error TS7031: Binding element 'size' implicitly has an 'any' type.
+app/(tabs)/_layout.tsx(42,36): error TS7031: Binding element 'color' implicitly has an 'any' type.
+app/(tabs)/_layout.tsx(42,43): error TS7031: Binding element 'size' implicitly has an 'any' type.
+app/(tabs)/_layout.tsx(49,36): error TS7031: Binding element 'color' implicitly has an 'any' type.
+app/(tabs)/_layout.tsx(49,43): error TS7031: Binding element 'size' implicitly has an 'any' type.
+app/(tabs)/index.tsx(1,27): error TS2307: Cannot find module 'expo-router' or its corresponding type declarations.
+app/_layout.tsx(1,23): error TS2307: Cannot find module 'expo-router' or its corresponding type declarations.
+app/chat/[id].tsx(1,38): error TS2307: Cannot find module 'expo-router' or its corresponding type declarations.
+app/index.tsx(1,37): error TS2307: Cannot find module 'expo-router' or its corresponding type declarations.
+components/ChatListScreen.tsx(6,32): error TS2307: Cannot find module 'expo-router' or its corresponding type declarations.
+components/ChatScreen.tsx(11,27): error TS2307: Cannot find module 'expo-router' or its corresponding type declarations.
+components/DashboardScreen.tsx(6,32): error TS2307: Cannot find module 'expo-router' or its corresponding type declarations.
