@@ -565,7 +565,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ sessionId }) => {
             )}
 
             {/* Input */}
-            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0}>
+            <KeyboardAvoidingView
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 20}
+            >
                 <View className="p-2 flex-row items-end gap-2 mb-1">
                     <View className="flex-1 bg-white dark:bg-[#1f2c34] rounded-3xl flex-row items-center shadow-sm border border-gray-100 dark:border-gray-700 px-1 py-1 min-h-[48px]">
                         <Pressable className="p-2">

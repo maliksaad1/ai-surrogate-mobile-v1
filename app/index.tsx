@@ -15,9 +15,9 @@ export default function Index() {
         );
     }
 
-    if (userContext.hasSeenIntro) {
-        return <Redirect href="/(tabs)" />;
-    }
+    // if (userContext.hasSeenIntro) {
+    //     return <Redirect href="/(tabs)" />;
+    // }
 
     const handleComplete = () => {
         updateContext({ hasSeenIntro: true });

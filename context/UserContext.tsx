@@ -1,22 +1,14 @@
-import React, { createContext, useState, useEffect, useContext } from 'react';
-import { UserContext as UserContextType } from '../types';
-import { db } from '../services/db';
+import { useColorScheme } from 'nativewind';
 
-interface UserContextProps {
-    userContext: UserContextType;
-    setUserContext: (ctx: UserContextType) => void;
-    isLoading: boolean;
-    updateContext: (newCtx: Partial<UserContextType>) => void;
-}
-
-const UserContext = createContext<UserContextProps | undefined>(undefined);
+// ... (existing imports)
 
 export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+    const { colorScheme, setColorScheme } = useColorScheme();
     const [userContext, setUserContextState] = useState<UserContextType>({
         name: '',
         preferredLanguage: 'en',
         hasSeenIntro: false,
-        theme: 'light'
+        theme: 'system' // Default to system
     });
     const [isLoading, setIsLoading] = useState(true);
 
@@ -24,6 +16,10 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const loadContext = async () => {
             const savedContext = await db.getUserContext();
             setUserContextState(savedContext);
+            // Sync NativeWind with saved preference
+            if (savedContext.theme) {
+                setColorScheme(savedContext.theme as 'light' | 'dark' | 'system');
+            }
             setIsLoading(false);
         };
         loadContext();
@@ -33,6 +29,11 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const updated = { ...userContext, ...newCtx };
         setUserContextState(updated);
         await db.saveUserContext(updated);
+
+        // Sync NativeWind when theme changes
+        if (newCtx.theme) {
+            setColorScheme(newCtx.theme as 'light' | 'dark' | 'system');
+        }
     };
 
     return (
