@@ -59,6 +59,7 @@ export interface CalendarEvent {
     time: string;
     description?: string;
     status?: 'pending' | 'confirmed' | 'cancelled';
+    notificationIds?: string[]; // Store notification IDs for cancellation
 }
 
 export interface TextDocument {

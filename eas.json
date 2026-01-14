@@ -11,9 +11,6 @@
             "distribution": "internal",
             "android": {
                 "buildType": "apk"
-            },
-            "env": {
-                "EXPO_PUBLIC_OPENROUTER_API_KEY": "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"
             }
         },
         "production": {}

@@ -45,16 +45,15 @@ npm install
 ### 3. Configure Environment Variables
 Create a `.env` file in the root directory:
 ```properties
-EXPO_PUBLIC_OPENROUTER_API_KEY=your_openrouter_api_key_here
+EXPO_PUBLIC_MISTRAL_API_KEY=your_mistral_api_key_here
 ```
-*(Note: The project is pre-configured to use a free OpenRouter model by default)*
+Get your free Mistral API key at: https://console.mistral.ai/
 
-### 4. Run the App
-Start the development server:
+### 4. Start Development Server
 ```bash
-npx expo start -c
+npx expo start
 ```
-- Scan the QR code with **Expo Go** (Android) or the Camera app (iOS).
+Scan QR code with **Expo Go** (Android) or Camera app (iOS).
 
 ## 🏗 Architecture
 

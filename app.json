@@ -5,7 +5,7 @@
     "scheme": "ai-surrogate-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/icon-fixed.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
@@ -17,20 +17,23 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.saad.aisurrogatemobile",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "Allow AI Surrogate to access your microphone for voice chats."
+        "NSMicrophoneUsageDescription": "Allow AI Surrogate to access your microphone for voice chats.",
+        "NSSpeechRecognitionUsageDescription": "Allow $(PRODUCT_NAME) to use speech recognition."
       }
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/adaptive-icon-fixed.png",
         "backgroundColor": "#ffffff"
       },
       "package": "com.saad.aisurrogatemobile",
       "edgeToEdgeEnabled": true,
+      "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "RECORD_AUDIO",
         "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE"
+        "WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO"
       ],
       "predictiveBackGestureEnabled": false,
       "intentFilters": [
@@ -46,13 +49,15 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-speech-recognition"
     ],
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "a7581589-8352-4fd1-a0c1-36f8be2ebf4e"
+        "projectId": "acd4a92a-8786-4aed-9fdb-70d0b78b96f4"
       }
-    }
+    },
+    "owner": "shahzaibhassan"
   }
 }

@@ -1,5 +1,5 @@
-const apiKey = process.env.EXPO_PUBLIC_OPENROUTER_API_KEY || '';
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const apiKey = process.env.EXPO_PUBLIC_MISTRAL_API_KEY || '';
+const MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions";
 
 export const generateMarketAnalysis = async (symbol: string, price: number, changePercent: number): Promise<string> => {
     if (!apiKey) return `Analysis unavailable (Missing API Key).`;
@@ -21,15 +21,14 @@ export const generateMarketAnalysis = async (symbol: string, price: number, chan
         Keep the entire response under 60 words. Use financial terminology but remain concise.
         `;
 
-        const response = await fetch(OPENROUTER_URL, {
+        const response = await fetch(MISTRAL_API_URL, {
             method: "POST",
             headers: {
                 "Authorization": `Bearer ${apiKey}`,
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://ai-surrogate-clone.com"
+                "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                model: "meta-llama/llama-3.3-70b-instruct:free",
+                model: "mistral-large-latest",
                 messages: [{ role: "user", content: prompt }]
             })
         });

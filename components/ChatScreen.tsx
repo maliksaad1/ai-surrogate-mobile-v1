@@ -1,17 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, FlatList, Image, Pressable, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Linking, ScrollView } from 'react-native';
-import { Send, Mic, MicOff, MoreVertical, Paperclip, X, Smile, ArrowLeft, Calendar, FileText, ExternalLink, Clock, Copy, Mail, Edit2, Check, PlusCircle, CreditCard, Share2, Trash2, TrendingUp, TrendingDown, Camera, File as FileIcon, Play, Square } from 'lucide-react-native';
+import { View, Text, TextInput, FlatList, Image, Pressable, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Linking, ScrollView, Modal } from 'react-native';
+import { Send, Mic, MicOff, MoreVertical, Paperclip, X, Smile, ArrowLeft, Calendar, FileText, ExternalLink, Clock, Copy, Mail, Edit2, Check, PlusCircle, CreditCard, Share2, Trash2, TrendingUp, TrendingDown, Camera, File as FileIcon, Play, Square, Volume2, VolumeX } from 'lucide-react-native';
 import { Message, Sender, AgentType, ChatSession } from '../types';
-import { generateSurrogateResponse } from '../services/geminiService';
+import { generateSurrogateResponse, generateConversationTitle } from '../services/geminiService';
 import { db } from '../services/db';
-import * as Speech from 'expo-speech';
+import { voiceService } from '../services/voiceService';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Audio } from 'expo-av';
+// import * as ExpoSpeechRecognition from 'expo-speech-recognition'; // ❌ NATIVE MODULE - Only works with dev build (expo run:android/ios), not Expo Go
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import BackgroundWrapper from './BackgroundWrapper';
 import GlassCard from './GlassCard';
+import Markdown from 'react-native-markdown-display';
+import { useTheme } from '../hooks/useTheme';
 
 interface ChatScreenProps {
     sessionId: string;
@@ -43,13 +46,120 @@ const EmailWidget: React.FC<{ data: any }> = ({ data }) => {
 
     const handleGmail = async () => {
         try {
-            const gmailLink = `https://mail.google.com/mail/u/0/?view=cm&fs=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-            await Linking.openURL(gmailLink);
+            if (Platform.OS === 'android') {
+                // Try to open Gmail Android app using Intent URI scheme
+                const gmailIntentUrl = `intent://compose?to=${encodeURIComponent(to)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}#Intent;package=com.google.android.gm;scheme=mailto;end`;
+                try {
+                    await Linking.openURL(gmailIntentUrl);
+                } catch {
+                    // Fallback to mailto if Gmail app not available
+                    const mailtoLink = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+                    await Linking.openURL(mailtoLink);
+                }
+            } else {
+                // iOS - use mailto which opens the default mail app
+                const mailtoLink = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+                await Linking.openURL(mailtoLink);
+            }
         } catch (error: any) {
-            Alert.alert("Error", `Could not open Gmail: ${error.message}`);
+            Alert.alert("Error", `Could not open Gmail app: ${error.message}`);
         }
     };
 
+    if (isEditing) {
+        // Full-screen edit modal with proper keyboard handling
+        return (
+            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} className="flex-1">
+                <Modal
+                    visible={isEditing}
+                    animationType="slide"
+                    transparent={false}
+                    onRequestClose={() => setIsEditing(false)}
+                >
+                    <View className="flex-1 bg-black/95 pt-4">
+                        {/* Header */}
+                        <View className="flex-row items-center justify-between px-4 pb-3 border-b border-neon-accent/20">
+                            <Text className="text-white font-bold text-base">Edit Email Draft</Text>
+                            <Pressable
+                                onPress={() => setIsEditing(false)}
+                                className="bg-neon-accent/20 px-3 py-1 rounded flex-row items-center gap-1"
+                            >
+                                <Check size={14} color="#EC4899" />
+                                <Text className="text-neon-accent font-bold text-xs">Done</Text>
+                            </Pressable>
+                        </View>
+
+                        {/* Scrollable Content */}
+                        <ScrollView className="flex-1 px-4 py-4" showsVerticalScrollIndicator={true} bounces={true}>
+                            {/* TO FIELD */}
+                            <View className="mb-4">
+                                <Text className="text-gray-400 text-xs font-bold mb-1.5 uppercase">Recipient Email</Text>
+                                <TextInput
+                                    value={to}
+                                    onChangeText={setTo}
+                                    placeholder="Enter recipient email"
+                                    placeholderTextColor="#666"
+                                    className="bg-black/50 border border-neon-accent/30 rounded-lg px-3 py-2.5 text-white text-sm"
+                                    keyboardType="email-address"
+                                />
+                            </View>
+
+                            {/* SUBJECT FIELD */}
+                            <View className="mb-4">
+                                <Text className="text-gray-400 text-xs font-bold mb-1.5 uppercase">Subject Line</Text>
+                                <TextInput
+                                    value={subject}
+                                    onChangeText={setSubject}
+                                    placeholder="Enter email subject"
+                                    placeholderTextColor="#666"
+                                    className="bg-black/50 border border-neon-accent/30 rounded-lg px-3 py-2.5 text-white text-sm"
+                                    multiline
+                                    numberOfLines={2}
+                                />
+                            </View>
+
+                            {/* BODY FIELD */}
+                            <View className="mb-4 flex-1">
+                                <Text className="text-gray-400 text-xs font-bold mb-1.5 uppercase">Email Body</Text>
+                                <TextInput
+                                    value={body}
+                                    onChangeText={setBody}
+                                    placeholder="Enter email body"
+                                    placeholderTextColor="#666"
+                                    className="bg-black/50 border border-neon-accent/30 rounded-lg px-3 py-2.5 text-white text-sm flex-1"
+                                    multiline
+                                    numberOfLines={12}
+                                    textAlignVertical="top"
+                                />
+                            </View>
+
+                            {/* Spacing for keyboard */}
+                            <View className="h-8" />
+                        </ScrollView>
+
+                        {/* Action Buttons */}
+                        <View className="px-4 py-3 border-t border-neon-accent/20 flex-row gap-2 justify-end bg-black/80">
+                            <Pressable
+                                onPress={() => setIsEditing(false)}
+                                className="bg-white/5 border border-white/10 py-2.5 px-4 rounded-lg"
+                            >
+                                <Text className="text-gray-300 text-xs font-bold">Cancel</Text>
+                            </Pressable>
+                            <Pressable
+                                onPress={handleSend}
+                                className="bg-neon-accent/20 border border-neon-accent/50 py-2.5 px-4 rounded-lg flex-row items-center gap-1"
+                            >
+                                <Send size={12} color="#EC4899" />
+                                <Text className="text-neon-accent text-xs font-bold">Send</Text>
+                            </Pressable>
+                        </View>
+                    </View>
+                </Modal>
+            </KeyboardAvoidingView>
+        );
+    }
+
+    // View mode (not editing)
     return (
         <GlassCard className="mt-2 w-full !mb-0 border-neon-accent/30 !bg-neon-accent/5">
             <View className="flex-row items-center justify-between mb-2 border-b border-neon-accent/20 pb-2 p-3">
@@ -60,75 +170,267 @@ const EmailWidget: React.FC<{ data: any }> = ({ data }) => {
                     <Text className="text-xs font-bold text-neon-accent">Neural Draft</Text>
                 </View>
                 <Pressable
-                    onPress={() => setIsEditing(!isEditing)}
+                    onPress={() => setIsEditing(true)}
                     className="flex-row items-center gap-1 bg-black/40 px-2 py-1 rounded"
                 >
-                    {isEditing ? <Check size={12} color="#EC4899" /> : <Edit2 size={12} color="#EC4899" />}
-                    <Text className="text-xs text-neon-accent font-bold">{isEditing ? "Done" : "Edit"}</Text>
+                    <Edit2 size={12} color="#EC4899" />
+                    <Text className="text-xs text-neon-accent font-bold">Edit</Text>
                 </Pressable>
             </View>
 
             <View className="space-y-2 p-3 pt-0">
                 {/* TO FIELD */}
-                <View className="flex-row items-center gap-1">
-                    <Text className="font-bold w-12 text-gray-400 text-xs uppercase">Target:</Text>
-                    {isEditing ? (
-                        <TextInput
-                            value={to}
-                            onChangeText={setTo}
-                            className="flex-1 bg-black/50 border border-white/10 rounded px-2 py-1 text-white text-xs"
-                            placeholderTextColor="#555"
-                        />
-                    ) : (
-                        <Text className="text-white bg-white/5 px-2 py-0.5 rounded border border-white/5 text-xs flex-1">{to}</Text>
-                    )}
+                <View className="flex-row items-start gap-2">
+                    <Text className="font-bold text-gray-400 text-xs uppercase pt-0.5">To:</Text>
+                    <Text className="text-white bg-white/5 px-2 py-1 rounded border border-white/5 text-xs flex-1 flex-wrap">{to}</Text>
                 </View>
 
                 {/* SUBJECT FIELD */}
-                <View className="flex-row items-center gap-1">
-                    <Text className="font-bold w-12 text-gray-400 text-xs uppercase">Header:</Text>
-                    {isEditing ? (
-                        <TextInput
-                            value={subject}
-                            onChangeText={setSubject}
-                            className="flex-1 bg-black/50 border border-white/10 rounded px-2 py-1 text-white text-xs"
-                            placeholderTextColor="#555"
-                        />
-                    ) : (
-                        <Text className="text-white font-medium text-xs flex-1">{subject}</Text>
-                    )}
+                <View className="flex-row items-start gap-2">
+                    <Text className="font-bold text-gray-400 text-xs uppercase pt-0.5">Subj:</Text>
+                    <Text className="text-white font-medium text-xs flex-1 flex-wrap">{subject}</Text>
                 </View>
 
                 {/* BODY FIELD */}
                 <View className="mt-2">
-                    {isEditing ? (
-                        <TextInput
-                            value={body}
-                            onChangeText={setBody}
-                            multiline
-                            numberOfLines={8}
-                            className="w-full bg-black/50 border border-white/10 rounded p-2 text-xs text-white font-mono h-32"
-                            textAlignVertical="top"
-                            placeholderTextColor="#555"
-                        />
-                    ) : (
-                        <Text className="text-xs text-gray-300 bg-white/5 p-2 rounded border border-white/5 font-mono">
-                            {body}
-                        </Text>
-                    )}
+                    <Text className="text-xs text-gray-300 bg-white/5 p-2 rounded border border-white/5 font-mono flex-wrap">
+                        {body}
+                    </Text>
                 </View>
 
                 {/* Action Buttons */}
                 <View className="pt-2 mt-1 flex-row gap-2 justify-end">
-                    <Pressable onPress={handleGmail} className="bg-white/5 border border-white/10 py-2 px-3 rounded-lg flex-row items-center active:bg-white/10">
-                        <Mail size={12} color="#9ca3af" style={{ marginRight: 8 }} />
-                        <Text className="text-gray-300 text-xs font-bold">Gmail Protocol</Text>
-                    </Pressable>
                     <Pressable onPress={handleSend} className="bg-neon-accent/20 border border-neon-accent/50 py-2 px-4 rounded-lg flex-row items-center active:bg-neon-accent/30">
-                        <Send size={12} color="#EC4899" style={{ marginRight: 8 }} />
-                        <Text className="text-neon-accent text-xs font-bold">{isEditing ? "Commit Changes" : "Execute Send"}</Text>
+                        <Send size={12} color="#EC4899" style={{ marginRight: 6 }} />
+                        <Text className="text-neon-accent text-xs font-bold">Send</Text>
                     </Pressable>
                 </View>
+            </View>
+        </GlassCard>
+    );
+};
+
+// --- Sub-Component: Editable Event Widget (Styled) ---
+interface EventWidgetProps {
+    data: any;
+    msgId: string;
+    onConfirm: (msgId: string, eventId: string) => void;
+    onCancel: (msgId: string, eventId: string) => void;
+}
+
+const EventWidget: React.FC<EventWidgetProps> = ({ data, msgId, onConfirm, onCancel }) => {
+    const [title, setTitle] = useState(data.title || '');
+    const [date, setDate] = useState(data.date || new Date().toISOString().split('T')[0]);
+    const [time, setTime] = useState(data.time || '12:00');
+    const [description, setDescription] = useState(data.description || '');
+    const [isEditing, setIsEditing] = useState(false);
+
+    const handleOpenGoogleCalendar = async () => {
+        try {
+            const formatGCalDate = (d: Date) => {
+                return d.toISOString().replace(/-|:|\.\d+/g, '');
+            };
+
+            let startDate: Date;
+            if (date && time) {
+                startDate = new Date(`${date}T${time}:00`);
+            } else if (date) {
+                startDate = new Date(date);
+            } else {
+                startDate = new Date();
+            }
+
+            if (isNaN(startDate.getTime())) {
+                startDate = new Date();
+            }
+
+            const endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
+
+            const gCalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title || 'Event')}&dates=${formatGCalDate(startDate)}/${formatGCalDate(endDate)}&details=${encodeURIComponent(description || '')}`;
+
+            await Linking.openURL(gCalUrl);
+        } catch (error: any) {
+            Alert.alert("Error", `Could not open Google Calendar: ${error.message}`);
+        }
+    };
+
+    if (data.status === 'cancelled') {
+        return (
+            <View className="bg-white/5 border border-white/10 rounded-lg p-3 opacity-60">
+                <View className="flex-row items-center">
+                    <X size={16} color="#6b7280" style={{ marginRight: 8 }} />
+                    <Text className="text-xs font-bold text-gray-500 line-through">{data.title} (Cancelled)</Text>
+                </View>
+            </View>
+        );
+    }
+
+    if (isEditing) {
+        return (
+            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} className="flex-1">
+                <Modal
+                    visible={isEditing}
+                    animationType="slide"
+                    transparent={false}
+                    onRequestClose={() => setIsEditing(false)}
+                >
+                    <View className="flex-1 bg-black/95 pt-4">
+                        {/* Header */}
+                        <View className="flex-row items-center justify-between px-4 pb-3 border-b border-neon-primary/20">
+                            <Text className="text-white font-bold text-base">Edit Event</Text>
+                            <Pressable
+                                onPress={() => setIsEditing(false)}
+                                className="bg-neon-primary/20 px-3 py-1 rounded flex-row items-center gap-1"
+                            >
+                                <Check size={14} color="#8B5CF6" />
+                                <Text className="text-neon-primary font-bold text-xs">Done</Text>
+                            </Pressable>
+                        </View>
+
+                        {/* Scrollable Content */}
+                        <ScrollView className="flex-1 px-4 py-4" showsVerticalScrollIndicator={true} bounces={true}>
+                            {/* TITLE FIELD */}
+                            <View className="mb-4">
+                                <Text className="text-gray-400 text-xs font-bold mb-1.5 uppercase">Event Title</Text>
+                                <TextInput
+                                    value={title}
+                                    onChangeText={setTitle}
+                                    placeholder="Enter event title"
+                                    placeholderTextColor="#666"
+                                    className="bg-black/50 border border-neon-primary/30 rounded-lg px-3 py-2.5 text-white text-sm"
+                                />
+                            </View>
+
+                            {/* DATE FIELD */}
+                            <View className="mb-4">
+                                <Text className="text-gray-400 text-xs font-bold mb-1.5 uppercase">Date (YYYY-MM-DD)</Text>
+                                <TextInput
+                                    value={date}
+                                    onChangeText={setDate}
+                                    placeholder="2026-01-15"
+                                    placeholderTextColor="#666"
+                                    className="bg-black/50 border border-neon-primary/30 rounded-lg px-3 py-2.5 text-white text-sm"
+                                />
+                            </View>
+
+                            {/* TIME FIELD */}
+                            <View className="mb-4">
+                                <Text className="text-gray-400 text-xs font-bold mb-1.5 uppercase">Time (HH:MM)</Text>
+                                <TextInput
+                                    value={time}
+                                    onChangeText={setTime}
+                                    placeholder="14:30"
+                                    placeholderTextColor="#666"
+                                    className="bg-black/50 border border-neon-primary/30 rounded-lg px-3 py-2.5 text-white text-sm"
+                                />
+                            </View>
+
+                            {/* DESCRIPTION FIELD */}
+                            <View className="mb-4 flex-1">
+                                <Text className="text-gray-400 text-xs font-bold mb-1.5 uppercase">Description</Text>
+                                <TextInput
+                                    value={description}
+                                    onChangeText={setDescription}
+                                    placeholder="Enter event description"
+                                    placeholderTextColor="#666"
+                                    className="bg-black/50 border border-neon-primary/30 rounded-lg px-3 py-2.5 text-white text-sm flex-1"
+                                    multiline
+                                    numberOfLines={4}
+                                    textAlignVertical="top"
+                                />
+                            </View>
+
+                            <View className="h-8" />
+                        </ScrollView>
+
+                        {/* Action Buttons */}
+                        <View className="px-4 py-3 border-t border-neon-primary/20 flex-row gap-2 justify-end bg-black/80">
+                            <Pressable
+                                onPress={() => setIsEditing(false)}
+                                className="bg-white/5 border border-white/10 py-2.5 px-4 rounded-lg"
+                            >
+                                <Text className="text-gray-300 text-xs font-bold">Cancel</Text>
+                            </Pressable>
+                            <Pressable
+                                onPress={() => {
+                                    setIsEditing(false);
+                                    handleOpenGoogleCalendar();
+                                }}
+                                className="bg-blue-500/20 border border-blue-500/50 py-2.5 px-4 rounded-lg flex-row items-center gap-1"
+                            >
+                                <ExternalLink size={12} color="#3b82f6" />
+                                <Text className="text-blue-400 text-xs font-bold">Add to Calendar</Text>
+                            </Pressable>
+                        </View>
+                    </View>
+                </Modal>
+            </KeyboardAvoidingView>
+        );
+    }
+
+    // View mode (not editing)
+    return (
+        <GlassCard className="!mb-0 !bg-neon-primary/5 border-neon-primary/20">
+            <View className="p-3">
+                <View className="flex-row items-start">
+                    <View className="bg-neon-primary/20 p-2 rounded mr-3">
+                        <Calendar size={20} color="#8B5CF6" />
+                    </View>
+                    <View className="flex-1">
+                        <View className="flex-row items-center justify-between">
+                            <Text className="font-bold text-white text-sm flex-1" numberOfLines={1}>{title}</Text>
+                            <Pressable
+                                onPress={() => setIsEditing(true)}
+                                className="flex-row items-center gap-1 bg-black/40 px-2 py-1 rounded ml-2"
+                            >
+                                <Edit2 size={12} color="#8B5CF6" />
+                                <Text className="text-xs text-neon-primary font-bold">Edit</Text>
+                            </Pressable>
+                        </View>
+                        <View className="flex-row items-center mt-1">
+                            <Clock size={12} color="#a78bfa" style={{ marginRight: 4 }} />
+                            <Text className="text-gray-300 text-xs">{date} at {time}</Text>
+                        </View>
+                        {description && (
+                            <Text className="text-gray-400 text-xs mt-1">{description}</Text>
+                        )}
+                    </View>
+                </View>
+
+                {/* Add to Google Calendar Button */}
+                <Pressable
+                    onPress={handleOpenGoogleCalendar}
+                    className="mt-3 bg-blue-500/20 border border-blue-500/50 py-2.5 px-4 rounded-lg flex-row items-center justify-center active:bg-blue-500/30"
+                >
+                    <ExternalLink size={14} color="#3b82f6" style={{ marginRight: 6 }} />
+                    <Text className="text-blue-400 text-xs font-bold">Add to Google Calendar</Text>
+                </Pressable>
+
+                {data.status === 'pending' ? (
+                    <View className="mt-2">
+                        <View className="flex-row gap-2">
+                            <Pressable
+                                onPress={() => onConfirm(msgId, data.id)}
+                                className="flex-1 bg-neon-success/20 border border-neon-success/50 py-2 rounded-lg flex-row items-center justify-center"
+                            >
+                                <Check size={14} color="#4ade80" style={{ marginRight: 4 }} />
+                                <Text className="text-neon-success text-xs font-bold uppercase">Confirm</Text>
+                            </Pressable>
+                            <Pressable
+                                onPress={() => onCancel(msgId, data.id)}
+                                className="flex-1 bg-white/5 border border-white/10 py-2 rounded-lg flex-row items-center justify-center"
+                            >
+                                <X size={14} color="#9ca3af" style={{ marginRight: 4 }} />
+                                <Text className="text-gray-400 text-xs font-bold uppercase">Cancel</Text>
+                            </Pressable>
+                        </View>
+                    </View>
+                ) : (
+                    <View className="mt-2 flex-row items-center justify-center w-full bg-neon-success/20 py-2 rounded-lg border border-neon-success/30">
+                        <Check size={14} color="#4ade80" style={{ marginRight: 8 }} />
+                        <Text className="text-xs font-bold text-neon-success uppercase">Confirmed</Text>
+                    </View>
+                )}
             </View>
         </GlassCard>
     );
@@ -142,9 +444,11 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ sessionId }) => {
     const [attachedFile, setAttachedFile] = useState<AttachedFile | null>(null);
     const [recording, setRecording] = useState<Audio.Recording | null>(null);
     const [isRecording, setIsRecording] = useState(false);
+    const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
     const flatListRef = useRef<FlatList>(null);
     const insets = useSafeAreaInsets();
     const router = useRouter();
+    const theme = useTheme();
 
     // Load Session
     useEffect(() => {
@@ -166,10 +470,13 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ sessionId }) => {
             if (recording) {
                 recording.stopAndUnloadAsync();
             }
+            // ❌ NATIVE MODULE - Only works with dev build, commented out for Expo Go
+            // ExpoSpeechRecognition.stop();
+            voiceService.cleanup();
         };
     }, []);
 
-    // Persist Messages
+    // Persist Messages & Auto-Generate Title using Mistral Small
     useEffect(() => {
         if (session) {
             const save = async () => {
@@ -180,10 +487,18 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ sessionId }) => {
                     updatedAt: new Date()
                 };
 
+                // Generate AI-powered title using Mistral Small on first message
                 if (messages.length > 0 && session.title === 'New Conversation') {
                     const firstUserMsg = messages.find(m => m.sender === Sender.USER);
                     if (firstUserMsg) {
-                        updatedSession.title = firstUserMsg.text.substring(0, 25) + (firstUserMsg.text.length > 25 ? '...' : '');
+                        try {
+                            const aiTitle = await generateConversationTitle(firstUserMsg.text);
+                            updatedSession.title = aiTitle;
+                        } catch (error) {
+                            console.error("Failed to generate title:", error);
+                            // Fallback to substring
+                            updatedSession.title = firstUserMsg.text.substring(0, 30) + (firstUserMsg.text.length > 30 ? '...' : '');
+                        }
                     }
                 }
 
@@ -194,8 +509,23 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ sessionId }) => {
         }
     }, [messages]);
 
-    const speakResponse = (text: string) => {
-        Speech.speak(text);
+    const handleTTSToggle = async (messageId: string, text: string) => {
+        try {
+            if (speakingMessageId === messageId) {
+                // Stop if currently speaking this message
+                await voiceService.stop();
+                setSpeakingMessageId(null);
+            } else {
+                // Start speaking this message
+                setSpeakingMessageId(messageId);
+                await voiceService.speak(text, messageId, () => {
+                    setSpeakingMessageId(null);
+                });
+            }
+        } catch (error) {
+            console.error('TTS Toggle Error:', error);
+            setSpeakingMessageId(null);
+        }
     };
 
     const handleSend = async () => {
@@ -241,7 +571,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ sessionId }) => {
         };
 
         setMessages(prev => [...prev, newAgentMsg]);
-        speakResponse(aiResponse.text);
+        // Note: TTS removed from auto-play, user can tap speaker icon
     };
 
     const handleFileUpload = async () => {
@@ -280,51 +610,80 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ sessionId }) => {
         }
     };
 
+    // ❌ NATIVE STT MODULE - Only works with dev build (expo run:android/ios), not Expo Go
+    // Commented out for Expo Go compatibility
+    const handleVoiceToggle = async () => {
+        Alert.alert(
+            'Speech-to-text unavailable in Expo Go',
+            'Native STT requires a custom dev build (expo prebuild + expo run:android/ios). Use the dev build to test STT features.',
+            [{ text: 'OK' }]
+        );
+    }
+
+    /* ❌ NATIVE MODULE CODE - Uncomment when using dev build
     const handleVoiceToggle = async () => {
         try {
-            if (recording) {
-                console.log("Stopping Recording...");
-                // Stop Recording
+            if (isRecording) {
+                console.log('Stopping Speech Recognition...');
+                ExpoSpeechRecognition.stop();
                 setIsRecording(false);
-                await recording.stopAndUnloadAsync();
-                const uri = recording.getURI();
-                console.log("Recording URI:", uri);
-                setRecording(null);
-
-                if (uri) {
-                    const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
-                    console.log("Audio Base64 Generated, Length:", base64.length);
-                    setAttachedFile({
-                        uri: uri,
-                        name: "voice_note.m4a",
-                        mimeType: "audio/m4a",
-                        base64: base64
-                    });
-                }
-            } else {
-                console.log("Starting Recording...");
-                // Start Recording
-                const perm = await Audio.requestPermissionsAsync();
-                console.log("Audio Permission:", perm.status);
-                if (perm.status !== 'granted') return;
-
-                await Audio.setAudioModeAsync({
-                    allowsRecordingIOS: true,
-                    playsInSilentModeIOS: true,
-                });
-
-                const { recording } = await Audio.Recording.createAsync(
-                    Audio.RecordingOptionsPresets.HIGH_QUALITY
-                );
-
-                setRecording(recording);
-                setIsRecording(true);
+                setIsProcessing(false);
+                return;
             }
+
+            console.log('Starting Speech Recognition...');
+            const { granted } = await ExpoSpeechRecognition.requestPermissionsAsync();
+            if (!granted) {
+                Alert.alert('Permission Required', 'Please allow microphone access for speech recognition.');
+                return;
+            }
+
+            setIsRecording(true);
+            setIsProcessing(true);
+
+            let finalTranscript = '';
+
+            const resultListener = ExpoSpeechRecognition.addSpeechRecognitionListener('result', (event) => {
+                if (event.results && event.results.length > 0) {
+                    const transcript = event.results[0].transcript;
+                    finalTranscript = transcript;
+                    setInput(transcript); // Live update
+                }
+            });
+
+            const endListener = ExpoSpeechRecognition.addSpeechRecognitionListener('end', () => {
+                console.log('STT Ended');
+                setIsRecording(false);
+                setIsProcessing(false);
+                resultListener.remove();
+                endListener.remove();
+                errorListener.remove();
+            });
+
+            const errorListener = ExpoSpeechRecognition.addSpeechRecognitionListener('error', (event) => {
+                console.error('STT Error:', event);
+                setIsRecording(false);
+                setIsProcessing(false);
+                Alert.alert('Speech Recognition Error', event.error || 'Failed to recognize speech');
+                resultListener.remove();
+                endListener.remove();
+                errorListener.remove();
+            });
+
+            ExpoSpeechRecognition.start({
+                lang: 'en-US',
+                interimResults: true,
+                maxAlternatives: 1,
+                continuous: false,
+            });
         } catch (err: any) {
-            console.error("Voice Error:", err);
-            Alert.alert('Failed to record voice', err.message);
+            console.error('Voice Error:', err);
+            Alert.alert('Recording Error', err?.message || 'Failed to start speech recognition');
+            setIsRecording(false);
+            setIsProcessing(false);
         }
     }
+    */
 
     const handleClearChat = async () => {
         Alert.alert("Purge Logs", "Permanently delete this neural thread?", [
@@ -417,60 +776,17 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ sessionId }) => {
         if (msg.payloadType === 'EVENT') {
             const events = Array.isArray(msg.payload) ? msg.payload : [msg.payload];
             return (
-                <View className="mt-2 space-y-2 w-full">
-                    {events.map((evt: any, idx: number) => {
-                        if (evt.status === 'cancelled') {
-                            return (
-                                <View key={idx} className="bg-white/5 border border-white/10 rounded-lg p-3 opacity-60">
-                                    <View className="flex-row items-center">
-                                        <X size={16} color="#6b7280" style={{ marginRight: 8 }} />
-                                        <Text className="text-xs font-bold text-gray-500 line-through">{evt.title} (Cancelled)</Text>
-                                    </View>
-                                </View>
-                            );
-                        }
-
-                        return (
-                            <GlassCard key={idx} className="!mb-0 !bg-neon-primary/5 border-neon-primary/20">
-                                <View className="p-3 flex-row items-start">
-                                    <View className="bg-neon-primary/20 p-2 rounded mr-3">
-                                        <Calendar size={20} color="#8B5CF6" />
-                                    </View>
-                                    <View className="flex-1">
-                                        <Text className="font-bold text-white text-sm" numberOfLines={1}>{evt.title}</Text>
-                                        <View className="flex-row items-center mt-1">
-                                            <Clock size={12} color="#a78bfa" style={{ marginRight: 4 }} />
-                                            <Text className="text-gray-300 text-xs">{evt.date} at {evt.time}</Text>
-                                        </View>
-
-                                        {evt.status === 'pending' ? (
-                                            <View className="mt-3 flex-row gap-2">
-                                                <Pressable
-                                                    onPress={() => handleConfirmEvent(msg.id, evt.id)}
-                                                    className="flex-1 bg-neon-primary py-2 rounded-lg flex-row items-center justify-center shadow-sm"
-                                                >
-                                                    <Check size={14} color="white" style={{ marginRight: 4 }} />
-                                                    <Text className="text-white text-xs font-bold uppercase">Confirm</Text>
-                                                </Pressable>
-                                                <Pressable
-                                                    onPress={() => handleCancelEvent(msg.id, evt.id)}
-                                                    className="flex-1 bg-white/5 border border-white/10 py-2 rounded-lg flex-row items-center justify-center"
-                                                >
-                                                    <X size={14} color="#9ca3af" style={{ marginRight: 4 }} />
-                                                    <Text className="text-gray-400 text-xs font-bold uppercase">Cancel</Text>
-                                                </Pressable>
-                                            </View>
-                                        ) : (
-                                            <View className="mt-3 flex-row items-center justify-center w-full bg-neon-success/20 py-2 rounded-lg border border-neon-success/30">
-                                                <Check size={14} color="#4ade80" style={{ marginRight: 8 }} />
-                                                <Text className="text-xs font-bold text-neon-success uppercase">Confirmed</Text>
-                                            </View>
-                                        )}
-                                    </View>
-                                </View>
-                            </GlassCard>
-                        );
-                    })}
+                <View className="mt-2 w-full">
+                    {events.map((evt: any, idx: number) => (
+                        <View key={idx} style={{ marginBottom: idx < events.length - 1 ? 8 : 0 }}>
+                            <EventWidget
+                                data={evt}
+                                msgId={msg.id}
+                                onConfirm={handleConfirmEvent}
+                                onCancel={handleCancelEvent}
+                            />
+                        </View>
+                    ))}
                 </View>
             );
         }
@@ -547,38 +863,137 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ sessionId }) => {
     const renderMessage = ({ item }: { item: Message }) => (
         <View className={`flex-col max-w-[85%] mb-4 ${item.sender === Sender.USER ? 'self-end items-end' : 'self-start items-start'}`}>
             <View
-                className={`px-4 py-3 rounded-2xl shadow-sm w-full border ${item.sender === Sender.USER
-                    ? 'bg-neon-primary/20 border-neon-primary/30 rounded-tr-sm'
-                    : 'bg-surrogate-card border-glass-border rounded-tl-sm'
-                    }`}
+                className="px-4 py-3 rounded-2xl shadow-sm w-full"
+                style={{
+                    backgroundColor: item.sender === Sender.USER
+                        ? (theme.isDark ? 'rgba(139, 92, 246, 0.25)' : 'rgba(124, 58, 237, 0.15)')
+                        : (theme.isDark ? '#0F1123' : '#ffffff'),
+                    borderWidth: 1,
+                    borderColor: item.sender === Sender.USER
+                        ? (theme.isDark ? 'rgba(139, 92, 246, 0.4)' : 'rgba(124, 58, 237, 0.3)')
+                        : theme.border,
+                    borderTopRightRadius: item.sender === Sender.USER ? 4 : 16,
+                    borderTopLeftRadius: item.sender === Sender.USER ? 16 : 4,
+                    borderBottomLeftRadius: 16,
+                    borderBottomRightRadius: 16,
+                    shadowColor: theme.isDark ? '#000' : '#64748b',
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: theme.isDark ? 0.3 : 0.1,
+                    shadowRadius: 4,
+                    elevation: 2,
+                }}
             >
                 {item.processingAgent && item.processingAgent !== AgentType.CHAT && (
-                    <View className="border-b border-white/5 pb-1 mb-2 flex-row items-center justify-between">
-                        <Text className={`text-[9px] uppercase font-black tracking-widest ${item.processingAgent === AgentType.SCHEDULE ? 'text-neon-primary' :
-                            item.processingAgent === AgentType.DOCS ? 'text-orange-400' :
-                                item.processingAgent === AgentType.EMAIL ? 'text-neon-accent' :
-                                    item.processingAgent === AgentType.PAYMENT ? 'text-neon-success' :
-                                        item.processingAgent === AgentType.SEARCH ? 'text-blue-400' :
-                                            'text-gray-400'
-                            }`}>
-                            {item.processingAgent} PROTOCOL
+                    <View
+                        className="pb-1 mb-2 flex-row items-center justify-between"
+                        style={{ borderBottomWidth: 1, borderBottomColor: theme.borderLight }}
+                    >
+                        <Text
+                            className="text-[9px] uppercase font-black tracking-widest"
+                            style={{
+                                color: item.processingAgent === AgentType.SCHEDULE ? '#a855f7' :
+                                    item.processingAgent === AgentType.DOCS ? '#f97316' :
+                                        item.processingAgent === AgentType.EMAIL ? '#EC4899' :
+                                            item.processingAgent === AgentType.PAYMENT ? '#10B981' :
+                                                item.processingAgent === AgentType.SEARCH ? '#3b82f6' :
+                                                    theme.textMuted
+                            }}
+                        >
+                            {item.processingAgent}
                         </Text>
                     </View>
                 )}
 
-                <Text className={`text-[15px] leading-relaxed ${item.sender === Sender.USER ? 'text-white' : 'text-gray-100'}`}>
-                    {item.text}
-                </Text>
+                {item.sender === Sender.USER ? (
+                    <Text
+                        className="text-[15px] leading-relaxed"
+                        style={{ color: theme.isDark ? '#ffffff' : '#1e1b4b' }}
+                    >
+                        {item.text}
+                    </Text>
+                ) : (
+                    <Markdown
+                        style={{
+                            body: { color: theme.text, fontSize: 15, lineHeight: 22 },
+                            paragraph: { marginTop: 0, marginBottom: 8 },
+                            heading1: { color: theme.text, fontSize: 20, fontWeight: 'bold', marginBottom: 8 },
+                            heading2: { color: theme.text, fontSize: 18, fontWeight: 'bold', marginBottom: 6 },
+                            heading3: { color: theme.text, fontSize: 16, fontWeight: 'bold', marginBottom: 4 },
+                            strong: { color: theme.text, fontWeight: 'bold' },
+                            em: { color: theme.textSecondary, fontStyle: 'italic' },
+                            bullet_list: { marginLeft: 8 },
+                            ordered_list: { marginLeft: 8 },
+                            list_item: { marginBottom: 4 },
+                            code_inline: {
+                                backgroundColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(124,58,237,0.1)',
+                                color: theme.isDark ? '#a5b4fc' : '#7c3aed',
+                                paddingHorizontal: 4,
+                                borderRadius: 4,
+                                fontFamily: 'monospace'
+                            },
+                            code_block: {
+                                backgroundColor: theme.isDark ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.05)',
+                                padding: 12,
+                                borderRadius: 8,
+                                fontFamily: 'monospace',
+                                color: theme.isDark ? '#a5b4fc' : '#1e1b4b'
+                            },
+                            fence: {
+                                backgroundColor: theme.isDark ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.05)',
+                                padding: 12,
+                                borderRadius: 8,
+                                fontFamily: 'monospace',
+                                color: theme.isDark ? '#a5b4fc' : '#1e1b4b'
+                            },
+                            blockquote: {
+                                backgroundColor: theme.isDark ? 'rgba(139,92,246,0.1)' : 'rgba(124,58,237,0.08)',
+                                borderLeftWidth: 3,
+                                borderLeftColor: theme.primary,
+                                paddingLeft: 12,
+                                marginVertical: 8
+                            },
+                            link: { color: theme.primary, textDecorationLine: 'underline' },
+                        }}
+                    >
+                        {item.text}
+                    </Markdown>
+                )}
 
                 {item.sender === Sender.AGENT && renderAgentWidget(item)}
 
-                <View className="flex-row justify-end items-center gap-2 mt-1.5">
-                    {item.tone && item.sender === Sender.AGENT && (
-                        <Text className="text-[9px] italic text-gray-500">
-                            mode: {item.tone}
-                        </Text>
-                    )}
-                    <Text className="text-[9px] text-gray-500 font-medium">
+                <View
+                    className="flex-row justify-between items-center mt-3 pt-2"
+                    style={{ borderTopWidth: 1, borderTopColor: theme.borderLight }}
+                >
+                    <View className="flex-row items-center gap-2">
+                        {item.sender === Sender.AGENT && (
+                            <Pressable
+                                onPress={() => handleTTSToggle(item.id, item.text)}
+                                className="p-1.5 rounded-full"
+                                style={({ pressed }) => ({
+                                    backgroundColor: pressed ? theme.primaryBg : 'transparent'
+                                })}
+                            >
+                                {speakingMessageId === item.id ? (
+                                    <Volume2 size={16} color={theme.primary} />
+                                ) : (
+                                    <VolumeX size={16} color={theme.textMuted} />
+                                )}
+                            </Pressable>
+                        )}
+                        {item.tone && item.sender === Sender.AGENT && (
+                            <Text
+                                className="text-[9px] italic"
+                                style={{ color: theme.textMuted }}
+                            >
+                                {item.tone}
+                            </Text>
+                        )}
+                    </View>
+                    <Text
+                        className="text-[9px] font-medium"
+                        style={{ color: theme.textMuted }}
+                    >
                         {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </Text>
                 </View>
@@ -586,35 +1001,77 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ sessionId }) => {
         </View>
     );
 
-    if (!session) return <View className="flex-1 bg-[#050511]" />;
+    if (!session) return <View className="flex-1" style={{ backgroundColor: theme.background }} />;
 
     return (
         <BackgroundWrapper>
             <View className="flex-1">
                 {/* Header */}
-                <View style={{ paddingTop: insets.top }} className="bg-black/20 border-b border-glass-border pb-3 px-3 flex-row items-center backdrop-blur-md z-10">
-                    <Pressable onPress={() => router.back()} className="p-2 mr-1 rounded-full active:bg-white/10">
-                        <ArrowLeft size={24} color="white" />
+                <View
+                    style={{
+                        paddingTop: insets.top,
+                        backgroundColor: theme.isDark ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.9)',
+                        borderBottomWidth: 1,
+                        borderBottomColor: theme.border
+                    }}
+                    className="pb-3 px-3 flex-row items-center z-10"
+                >
+                    <Pressable
+                        onPress={() => router.back()}
+                        className="p-2 mr-1 rounded-full"
+                        style={({ pressed }) => ({
+                            backgroundColor: pressed ? theme.primaryBg : 'transparent'
+                        })}
+                    >
+                        <ArrowLeft size={24} color={theme.text} />
                     </Pressable>
-                    <View className="w-10 h-10 rounded-full border border-neon-primary/50 bg-black/40 items-center justify-center mr-3 overflow-hidden">
+                    <View
+                        className="w-10 h-10 rounded-full items-center justify-center mr-3 overflow-hidden"
+                        style={{
+                            borderWidth: 1,
+                            borderColor: theme.primary + '50',
+                            backgroundColor: theme.card
+                        }}
+                    >
                         <Image source={{ uri: `https://picsum.photos/seed/${session.id}/200` }} className="w-full h-full opacity-90" />
                     </View>
                     <View className="flex-1">
-                        <Text className="font-bold text-lg text-white" numberOfLines={1}>{session.title}</Text>
+                        <Text
+                            className="font-bold text-lg"
+                            numberOfLines={1}
+                            style={{ color: theme.text }}
+                        >
+                            {session.title}
+                        </Text>
                         <View className="flex-row items-center">
-                            <View className="w-1.5 h-1.5 bg-neon-success rounded-full mr-1.5 shadow-[0_0_8px_#4ade80]" />
-                            <Text className="text-[10px] text-neon-success tracking-widest uppercase">Connected</Text>
+                            <View
+                                className="w-1.5 h-1.5 rounded-full mr-1.5"
+                                style={{ backgroundColor: theme.success }}
+                            />
+                            <Text
+                                className="text-[10px] tracking-widest uppercase"
+                                style={{ color: theme.success }}
+                            >
+                                Online
+                            </Text>
                         </View>
                     </View>
-                    <Pressable onPress={handleClearChat} className="p-2 active:bg-white/10 rounded-full">
-                        <Trash2 size={20} color="rgba(255,255,255,0.7)" />
+                    <Pressable
+                        onPress={handleClearChat}
+                        className="p-2 rounded-full"
+                        style={({ pressed }) => ({
+                            backgroundColor: pressed ? 'rgba(239,68,68,0.1)' : 'transparent'
+                        })}
+                    >
+                        <Trash2 size={20} color={theme.textMuted} />
                     </Pressable>
                 </View>
 
                 {/* Main Content Wrapped in KeyboardAvoidingView */}
                 <KeyboardAvoidingView
                     style={{ flex: 1 }}
-                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
                 >
                     {/* Messages */}
                     <FlatList
@@ -622,10 +1079,12 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ sessionId }) => {
                         data={messages}
                         renderItem={renderMessage}
                         keyExtractor={item => item.id}
-                        contentContainerStyle={{ padding: 16, paddingBottom: 20 }}
+                        contentContainerStyle={{ padding: 16, paddingBottom: 8 }}
                         onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
                         onLayout={() => flatListRef.current?.scrollToEnd({ animated: true })}
                         className="flex-1"
+                        scrollEnabled={true}
+                        nestedScrollEnabled={true}
                     />
 
                     {isProcessing && (
@@ -657,21 +1116,44 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ sessionId }) => {
                     )}
 
                     {/* Input */}
-                    <View className="p-2 flex-row items-end gap-2 mb-1">
-                        <View className="flex-1 bg-white/5 rounded-[24px] flex-row items-center border border-glass-border px-1.5 py-1 min-h-[48px] backdrop-blur-xl">
+                    <View className="px-2 pb-1 pt-1 flex-row items-end gap-2">
+                        <View
+                            className="flex-1 rounded-[24px] flex-row items-center px-1.5 py-1 min-h-[48px]"
+                            style={{
+                                backgroundColor: theme.inputBg,
+                                borderWidth: 1,
+                                borderColor: theme.border
+                            }}
+                        >
                             <TextInput
                                 value={input}
                                 onChangeText={setInput}
-                                placeholder={attachedFile ? "Add caption..." : "Transmit message..."}
-                                placeholderTextColor="rgba(255,255,255,0.3)"
-                                className="flex-1 text-white px-3 py-2 max-h-32 text-base"
+                                placeholder={attachedFile ? "Add a caption..." : "Type a message..."}
+                                placeholderTextColor={theme.textMuted}
+                                className="flex-1 px-3 py-2 max-h-32 text-base"
+                                style={{ color: theme.text }}
                                 multiline
                             />
-                            <Pressable onPress={handleFileUpload} className="p-2 -rotate-45 active:opacity-70">
-                                <Paperclip size={20} color="rgba(255,255,255,0.4)" />
+                            <Pressable
+                                onPress={handleFileUpload}
+                                className="p-2 -rotate-45"
+                                style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+                            >
+                                <Paperclip size={20} color={theme.textMuted} />
                             </Pressable>
                             {(input.length > 0 || attachedFile) && (
-                                <Pressable onPress={handleSend} className="p-2 mr-1 bg-neon-primary rounded-full shadow-[0_0_15px_rgba(139,92,246,0.5)]">
+                                <Pressable
+                                    onPress={handleSend}
+                                    className="p-2 mr-1 rounded-full"
+                                    style={{
+                                        backgroundColor: theme.primary,
+                                        shadowColor: theme.primary,
+                                        shadowOffset: { width: 0, height: 0 },
+                                        shadowOpacity: 0.5,
+                                        shadowRadius: 8,
+                                        elevation: 4
+                                    }}
+                                >
                                     <Send size={18} color="white" />
                                 </Pressable>
                             )}
@@ -679,9 +1161,18 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ sessionId }) => {
 
                         <Pressable
                             onPress={handleVoiceToggle}
-                            className={`w-12 h-12 rounded-full border border-glass-border items-center justify-center active:bg-neon-primary/20 ${isRecording ? 'bg-red-500/20 border-red-500 animate-pulse' : 'bg-white/5'}`}
+                            style={{
+                                width: 48,
+                                height: 48,
+                                borderRadius: 24,
+                                borderWidth: 1,
+                                borderColor: isRecording ? theme.error : theme.border,
+                                backgroundColor: isRecording ? theme.error + '20' : theme.inputBg,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                            }}
                         >
-                            {isRecording ? <Square size={20} color="#ef4444" fill="#ef4444" /> : <Mic size={24} color="#8B5CF6" />}
+                            {isRecording ? <Square size={20} color={theme.error} fill={theme.error} /> : <Mic size={24} color={theme.primary} />}
                         </Pressable>
                     </View>
                 </KeyboardAvoidingView>

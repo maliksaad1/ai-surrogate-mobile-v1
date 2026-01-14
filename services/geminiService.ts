@@ -2,8 +2,8 @@ import { AgentType } from "../types";
 import { agentTools, AgentResult } from "./agentTools";
 import { db } from "./db";
 
-const apiKey = process.env.EXPO_PUBLIC_OPENROUTER_API_KEY || '';
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const apiKey = process.env.EXPO_PUBLIC_MISTRAL_API_KEY || '';
+const MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions";
 
 // Helper to robustly extract JSON from text that might contain markdown or trailing chars
 const extractJSONString = (text: string): string => {
@@ -74,7 +74,7 @@ export const generateSurrogateResponse = async (
 }> => {
     if (!apiKey) {
         return {
-            text: "I'm offline. Please check the OpenRouter API configuration.",
+            text: "I'm offline. Please check the Mistral API configuration.",
             tone: "Neutral",
             language: "en",
             agent: AgentType.CHAT,
@@ -147,7 +147,7 @@ Existing Events in DB: ${contextEvents || "None"}
 `;
 
     try {
-        const model = 'google/gemini-2.0-flash-exp:free'; // Using Gemini 2.0 Flash via OpenRouter for Multimodal Support
+        const model = 'mistral-large-latest'; // Using Mistral Large (123B) - powerful reasoning and context understanding
 
         const messages: any[] = [
             { role: "system", content: SYSTEM_INSTRUCTION }
@@ -192,12 +192,10 @@ Existing Events in DB: ${contextEvents || "None"}
         messages.push({ role: "user", content: "Respond in valid JSON." });
 
 
-        const response = await fetch(OPENROUTER_URL, {
+        const response = await fetch(MISTRAL_API_URL, {
             method: "POST",
             headers: {
                 "Authorization": `Bearer ${apiKey}`,
-                "HTTP-Referer": "https://ai-surrogate-clone.com", // Required by OpenRouter
-                "X-Title": "AI Surrogate Clone", // Optional
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
@@ -208,8 +206,8 @@ Existing Events in DB: ${contextEvents || "None"}
 
         if (!response.ok) {
             const errText = await response.text();
-            console.error("OpenRouter API Error:", response.status, errText);
-            throw new Error(`OpenRouter Error: ${response.status}`);
+            console.error("Mistral API Error:", response.status, errText);
+            throw new Error(`Mistral API Error: ${response.status}`);
         }
 
         const data = await response.json();
@@ -262,12 +260,104 @@ Existing Events in DB: ${contextEvents || "None"}
         };
 
     } catch (error) {
-        console.error("Gemini/OpenRouter Error:", error);
+        console.error("Mistral AI Error:", error);
         return {
             text: "I encountered a processing error. Please try again.",
             tone: "Error",
             language: "en",
             agent: AgentType.CHAT
         };
+    }
+};
+
+// Generate smart conversation title using Mistral Small (faster)
+export const generateConversationTitle = async (userMessage: string): Promise<string> => {
+    try {
+        const response = await fetch(MISTRAL_API_URL, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'mistral-small-latest',
+                messages: [
+                    {
+                        role: 'user',
+                        content: `Generate a very short, concise title (3-5 words) for a chat conversation based on this first message. Return ONLY the title, nothing else. Do NOT include quotes.\n\nMessage: "${userMessage}"`
+                    }
+                ],
+                temperature: 0.3,
+                max_tokens: 50
+            })
+        });
+
+        if (!response.ok) {
+            console.error("Title Generation API Error:", response.status);
+            return userMessage.substring(0, 30) + (userMessage.length > 30 ? '...' : '');
+        }
+
+        const data = await response.json();
+        let title = data.choices?.[0]?.message?.content?.trim() || '';
+        
+        // Remove any surrounding quotes
+        title = title.replace(/^["']|["']$/g, '');
+        
+        // Fallback if title is empty or too long
+        if (!title || title.length > 50) {
+            return userMessage.substring(0, 30) + (userMessage.length > 30 ? '...' : '');
+        }
+
+        return title;
+    } catch (error) {
+        console.error("Title Generation Error:", error);
+        // Fallback: use first 30 chars of message
+        return userMessage.substring(0, 30) + (userMessage.length > 30 ? '...' : '');
+    }
+};
+
+// Craft response using real search results from DuckDuckGo
+export const craftSearchResponse = async (query: string, searchResults: any[]): Promise<string> => {
+    try {
+        // Format search results for AI
+        const resultsText = searchResults
+            .map((result, idx) => `${idx + 1}. **${result.title}**\n   ${result.snippet}\n   Source: ${result.source}`)
+            .join('\n\n');
+
+        const response = await fetch(MISTRAL_API_URL, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'mistral-small-latest',
+                messages: [
+                    {
+                        role: 'user',
+                        content: `Based on these real search results about "${query}", provide a helpful, natural response that synthesizes the information. Be concise and informative.\n\nSearch Results:\n${resultsText}`
+                    }
+                ],
+                temperature: 0.7,
+                max_tokens: 300
+            })
+        });
+
+        if (!response.ok) {
+            console.error("Search Response Generation Error:", response.status);
+            return `I found information about "${query}" but couldn't synthesize it. Here are the raw results:\n\n${resultsText}`;
+        }
+
+        const data = await response.json();
+        const craftedResponse = data.choices?.[0]?.message?.content?.trim() || '';
+
+        if (!craftedResponse) {
+            return `I found information about "${query}":\n\n${resultsText}`;
+        }
+
+        return craftedResponse;
+    } catch (error) {
+        console.error("Search Response Crafting Error:", error);
+        return `I was searching for "${query}" but encountered an error. Please try again.`;
     }
 };

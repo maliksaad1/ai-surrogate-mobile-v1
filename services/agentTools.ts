@@ -1,5 +1,6 @@
 import { AgentType, CalendarEvent, SearchResult, TextDocument, Email, PaymentTransaction, FinancialReport } from "../types";
 import { db } from "./db";
+import { craftSearchResponse } from "./geminiService";
 
 export interface AgentResult {
     success: boolean;
@@ -81,33 +82,42 @@ export const agentTools: Record<AgentType, (action: string, params: any) => Prom
                     description: params.description || '',
                     status: 'pending'
                 };
+
                 await db.addEvent(newEvent);
 
+                // Generate Google Calendar URL for direct scheduling
                 const gCalUrl = generateGoogleCalendarUrl(newEvent);
 
                 return {
                     success: true,
-                    message: `I've prepared an event for "${newEvent.title}". Please confirm details below.`,
+                    message: `✅ Event created! Add "${newEvent.title}" to your Google Calendar to get reminders.`,
                     data: { ...newEvent, gCalUrl },
                     payloadType: 'EVENT'
                 };
 
             case 'list_events':
-                const events = await db.getEvents();
-                const upcoming = events.filter(e => e.status !== 'cancelled').slice(-3); // Get last 3 active for demo
+                const allEvents = await db.getEvents();
+                // Filter out cancelled events and sort by date/time
+                const activeEvents = allEvents
+                    .filter(e => e.status !== 'cancelled')
+                    .sort((a, b) => {
+                        const dateA = new Date(`${a.date}T${a.time}`);
+                        const dateB = new Date(`${b.date}T${b.time}`);
+                        return dateA.getTime() - dateB.getTime();
+                    });
 
                 // Enhance with GCal URLs
-                const upcomingWithUrls = upcoming.map(evt => ({
+                const eventsWithUrls = activeEvents.map(evt => ({
                     ...evt,
                     gCalUrl: generateGoogleCalendarUrl(evt)
                 }));
 
                 return {
                     success: true,
-                    message: upcoming.length > 0
-                        ? `You have ${upcoming.length} upcoming events.`
-                        : "Your schedule is clear.",
-                    data: upcomingWithUrls,
+                    message: activeEvents.length > 0
+                        ? `📅 You have ${activeEvents.length} scheduled event${activeEvents.length > 1 ? 's' : ''}.`
+                        : "Your schedule is clear. No events scheduled.",
+                    data: eventsWithUrls,
                     payloadType: 'EVENT'
                 };
 
@@ -244,27 +254,144 @@ export const agentTools: Record<AgentType, (action: string, params: any) => Prom
         }
     },
 
-    // --- Search Agent Tools (Mocked) ---
+    // --- Search Agent Tools (Jina AI Reader - Free & Reliable) ---
     [AgentType.SEARCH]: async (action: string, params: any): Promise<AgentResult> => {
-        // In a real app, this would call Google Search Grounding or a Custom Search API
         const query = params.query || "Unknown";
 
-        // Mock Results
-        const mockResults: SearchResult = {
-            query: query,
-            results: [
-                { title: `${query} - Wikipedia`, snippet: "Detailed information about the topic found on the free encyclopedia...", source: "wikipedia.org" },
-                { title: `Latest News: ${query}`, snippet: "Breaking news and updates regarding your search query...", source: "news.google.com" },
-                { title: `Images for ${query}`, snippet: "View high resolution images...", source: "images.google.com" }
-            ]
-        };
+        try {
+            // Jina AI Reader approach: Read search results directly
+            // First, construct a Google search URL and let Jina extract the content
+            const searchQuery = encodeURIComponent(query);
 
-        return {
-            success: true,
-            message: `Here is what I found for "${query}".`,
-            data: mockResults,
-            payloadType: 'SEARCH_RESULT'
-        };
+            // Try Wikipedia first for factual queries (most reliable)
+            const wikiUrl = `https://en.wikipedia.org/wiki/${query.replace(/\s+/g, '_')}`;
+
+            try {
+                // Use Jina AI Reader to extract clean content from Wikipedia
+                const jinaResponse = await fetch(`https://r.jina.ai/${wikiUrl}`, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Return-Format': 'markdown'
+                    }
+                });
+
+                if (jinaResponse.ok) {
+                    const jinaData = await jinaResponse.json();
+                    const content = jinaData.data?.content || jinaData.content || '';
+
+                    if (content && content.length > 100) {
+                        // Extract first few paragraphs (limit to ~500 chars for AI processing)
+                        const excerpt = content.substring(0, 800).trim();
+
+                        // Craft response using the extracted content
+                        const craftedMessage = await craftSearchResponse(query, [{
+                            title: `Wikipedia: ${query}`,
+                            snippet: excerpt,
+                            source: 'wikipedia.org'
+                        }]);
+
+                        return {
+                            success: true,
+                            message: craftedMessage,
+                            data: {
+                                query: query,
+                                results: [{
+                                    title: `Wikipedia: ${query}`,
+                                    snippet: excerpt.substring(0, 200) + '...',
+                                    source: 'wikipedia.org'
+                                }]
+                            },
+                            payloadType: 'SEARCH_RESULT'
+                        };
+                    }
+                }
+            } catch (wikiError) {
+                console.log("Wikipedia not found, trying web search");
+            }
+
+            // Fallback: Use Jina AI to search Google results
+            const googleSearchUrl = `https://www.google.com/search?q=${searchQuery}`;
+
+            const jinaSearchResponse = await fetch(`https://r.jina.ai/${googleSearchUrl}`, {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Return-Format': 'markdown'
+                }
+            });
+
+            if (!jinaSearchResponse.ok) {
+                throw new Error(`Jina AI search error: ${jinaSearchResponse.status}`);
+            }
+
+            const searchData = await jinaSearchResponse.json();
+            const searchContent = searchData.data?.content || searchData.content || '';
+
+            if (!searchContent || searchContent.length < 50) {
+                throw new Error('No search results found');
+            }
+
+            // Extract meaningful content (first 1000 chars)
+            const excerpt = searchContent.substring(0, 1000).trim();
+
+            // Craft response using the search results
+            const craftedMessage = await craftSearchResponse(query, [{
+                title: `Search results for "${query}"`,
+                snippet: excerpt,
+                source: 'google.com'
+            }]);
+
+            return {
+                success: true,
+                message: craftedMessage,
+                data: {
+                    query: query,
+                    results: [{
+                        title: `Web search: ${query}`,
+                        snippet: excerpt.substring(0, 300) + '...',
+                        source: 'web search'
+                    }]
+                },
+                payloadType: 'SEARCH_RESULT'
+            };
+
+        } catch (error) {
+            console.error("Search Error:", error);
+
+            // Ultimate fallback: Use Mistral AI's knowledge directly
+            try {
+                const fallbackMessage = await craftSearchResponse(query, [{
+                    title: `Information about "${query}"`,
+                    snippet: `Based on general knowledge about ${query}`,
+                    source: 'AI Knowledge Base'
+                }]);
+
+                return {
+                    success: true,
+                    message: `🤖 Based on my knowledge: ${fallbackMessage}\n\n*Note: Unable to fetch live internet data. This is from my training data.*`,
+                    data: {
+                        query: query,
+                        results: [{
+                            title: query,
+                            snippet: 'Information from AI knowledge base',
+                            source: 'AI Training Data'
+                        }]
+                    },
+                    payloadType: 'SEARCH_RESULT'
+                };
+            } catch {
+                return {
+                    success: false,
+                    message: `Unable to search for "${query}" right now. Please try rephrasing your question or try again later.`,
+                    data: {
+                        query: query,
+                        results: []
+                    },
+                    payloadType: 'SEARCH_RESULT'
+                };
+            }
+        }
     },
 
     // --- Chat Agent (No Tools, just pass through) ---
